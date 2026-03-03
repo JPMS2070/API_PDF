@@ -113,7 +113,7 @@ def gerar_pdf(cliente: ClienteRequest):
         nome_arquivo = gerar_pdf_personalizado(palavra_chave, cliente.nome)
 
         # URL base da sua API (configure a variável de ambiente BASE_URL no Railway)
-        base_url = os.getenv("BASE_URL", "https://web-production-24b0a.up.railway.app/")
+        base_url = os.getenv("BASE_URL", "https://web-production-24b0a.up.railway.app/git")
         link_download = f"{base_url}/download/{nome_arquivo}"
 
         return {
