@@ -1,6 +1,7 @@
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Query
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
+from typing import Optional
 import random
 import string
 import os
@@ -8,7 +9,6 @@ import uuid
 from datetime import datetime, timedelta
 from pypdf import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
-from reportlab.lib.pagesizes import A4
 import io
 
 app = FastAPI(title="API Gerador de PDF - João Filho Advocacia")
@@ -21,16 +21,14 @@ PDF_MODELO = "termo_modelo.pdf"
 
 
 class ClienteRequest(BaseModel):
-    nome: str = "Cliente"
-    # Campos opcionais que o LeadHub pode enviar
-    telefone: str = ""
-    email: str = ""
+    nome: Optional[str] = "Cliente"
+    telefone: Optional[str] = ""
+    email: Optional[str] = ""
 
 
-def gerar_palavra_chave(tamanho=4) -> str:
+def gerar_palavra_chave() -> str:
     """Gera palavra-chave aleatória com letras maiúsculas, minúsculas e números"""
     chars = string.ascii_letters + string.digits
-    # Garante pelo menos 1 maiúscula, 1 minúscula, 1 número
     senha = [
         random.choice(string.ascii_uppercase),
         random.choice(string.ascii_lowercase),
@@ -46,14 +44,11 @@ def criar_overlay_palavra_chave(palavra_chave: str, page_width: float, page_heig
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
-    # ⚠️ AJUSTE ESTAS COORDENADAS conforme o seu PDF modelo
-    # x, y = posição onde a palavra aparecerá (medido a partir do canto inferior esquerdo)
-    # Para descobrir a posição correta, veja o guia no README
-    x = page_width * 0.50   # ~centro horizontal do campo
-    y = page_height * 0.83  # altura do campo na página 5
+    x = page_width * 0.50
+    y = page_height * 0.83
 
     c.setFont("Helvetica-Bold", 18)
-    c.setFillColorRGB(0, 0, 0)  # Cor preta
+    c.setFillColorRGB(0, 0, 0)
     c.drawCentredString(x, y, palavra_chave)
     c.save()
 
@@ -70,12 +65,10 @@ def gerar_pdf_personalizado(palavra_chave: str, nome_cliente: str) -> str:
     reader = PdfReader(PDF_MODELO)
     writer = PdfWriter()
 
-    # Página onde a palavra-chave aparece (última página = índice -1)
     pagina_alvo = len(reader.pages) - 1
 
     for i, page in enumerate(reader.pages):
         if i == pagina_alvo:
-            # Cria overlay com a palavra-chave
             overlay_buffer = criar_overlay_palavra_chave(
                 palavra_chave,
                 float(page.mediabox.width),
@@ -83,10 +76,8 @@ def gerar_pdf_personalizado(palavra_chave: str, nome_cliente: str) -> str:
             )
             overlay_reader = PdfReader(overlay_buffer)
             page.merge_page(overlay_reader.pages[0])
-
         writer.add_page(page)
 
-    # Nome único para o arquivo
     unique_id = str(uuid.uuid4())[:8]
     nome_arquivo = f"termo_{unique_id}.pdf"
     caminho = os.path.join(OUTPUT_DIR, nome_arquivo)
@@ -97,33 +88,44 @@ def gerar_pdf_personalizado(palavra_chave: str, nome_cliente: str) -> str:
     return nome_arquivo
 
 
+def montar_resposta(nome_cliente: str):
+    """Lógica central de geração do PDF — usada por todos os endpoints"""
+    palavra_chave = gerar_palavra_chave()
+    nome_arquivo = gerar_pdf_personalizado(palavra_chave, nome_cliente)
+    base_url = os.getenv("BASE_URL", "https://web-copy-production-c376.up.railway.app")
+    link_download = f"{base_url}/download/{nome_arquivo}"
+
+    return {
+        "sucesso": True,
+        "cliente": nome_cliente,
+        "palavra_chave": palavra_chave,
+        "link_download": link_download,
+        "mensagem": f"PDF gerado com sucesso para {nome_cliente}"
+    }
+
+
 @app.get("/")
 def health_check():
     return {"status": "online", "servico": "Gerador PDF João Filho Advocacia"}
 
 
-@app.post("/gerar-pdf")
-def gerar_pdf(cliente: ClienteRequest):
-    """
-    Endpoint principal chamado pelo LeadHub.
-    Recebe dados do cliente, gera PDF com palavra-chave e retorna link para download.
-    """
+# ✅ Endpoint GET — LiderHub chama sem precisar de body
+# Exemplo: /gerar-pdf-link ou /gerar-pdf-link?nome=Maria
+@app.get("/gerar-pdf-link")
+def gerar_pdf_get(nome: Optional[str] = Query(default="Cliente")):
     try:
-        palavra_chave = gerar_palavra_chave()
-        nome_arquivo = gerar_pdf_personalizado(palavra_chave, cliente.nome)
+        return montar_resposta(nome)
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=500, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Erro ao gerar PDF: {str(e)}")
 
-        # URL base da sua API (configure a variável de ambiente BASE_URL no Railway)
-        base_url = os.getenv("BASE_URL", "https://web-copy-production-c376.up.railway.app")
-        link_download = f"{base_url}/download/{nome_arquivo}"
 
-        return {
-            "sucesso": True,
-            "cliente": cliente.nome,
-            "palavra_chave": palavra_chave,
-            "link_download": link_download,
-            "mensagem": f"PDF gerado com sucesso para {cliente.nome}"
-        }
-
+# ✅ Endpoint POST — para chamadas com body JSON
+@app.post("/gerar-pdf")
+def gerar_pdf_post(cliente: ClienteRequest):
+    try:
+        return montar_resposta(cliente.nome or "Cliente")
     except FileNotFoundError as e:
         raise HTTPException(status_code=500, detail=str(e))
     except Exception as e:
@@ -133,7 +135,6 @@ def gerar_pdf(cliente: ClienteRequest):
 @app.get("/download/{nome_arquivo}")
 def download_pdf(nome_arquivo: str):
     """Endpoint para download do PDF gerado"""
-    # Segurança: impede path traversal
     if "/" in nome_arquivo or "\\" in nome_arquivo or ".." in nome_arquivo:
         raise HTTPException(status_code=400, detail="Nome de arquivo inválido")
 
@@ -151,7 +152,7 @@ def download_pdf(nome_arquivo: str):
 
 @app.delete("/limpar-pdfs")
 def limpar_pdfs_antigos():
-    """Remove PDFs com mais de 24h (pode ser chamado via cron ou manualmente)"""
+    """Remove PDFs com mais de 24h"""
     removidos = 0
     agora = datetime.now()
     for arquivo in os.listdir(OUTPUT_DIR):
