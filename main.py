@@ -41,15 +41,19 @@ def gerar_palavra_chave() -> str:
 
 def criar_overlay_palavra_chave(palavra_chave: str, page_width: float, page_height: float) -> io.BytesIO:
     """Cria uma camada PDF com a palavra-chave posicionada sobre o campo em branco"""
+    agora = datetime.now().strftime("%d/%m/%Y")
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_width, page_height))
 
     x = page_width * 0.50
     y = page_height * 0.83
+    x_date = page_width * 0.25
+    y_date = page_height * 0.09
 
     c.setFont("Helvetica-Bold", 18)
     c.setFillColorRGB(0, 0, 0)
     c.drawCentredString(x, y, palavra_chave)
+    c.drawCentredString(x_date, y_date, agora)
     c.save()
 
     packet.seek(0)
@@ -72,7 +76,7 @@ def gerar_pdf_personalizado(palavra_chave: str, nome_cliente: str) -> str:
             overlay_buffer = criar_overlay_palavra_chave(
                 palavra_chave,
                 float(page.mediabox.width),
-                float(page.mediabox.height)
+                float(page.mediabox.height),
             )
             overlay_reader = PdfReader(overlay_buffer)
             page.merge_page(overlay_reader.pages[0])
